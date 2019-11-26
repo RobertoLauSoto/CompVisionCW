@@ -25,7 +25,21 @@ String cascade_name = "frontalface.xml";
 CascadeClassifier cascade;
 
 //define 2D array for bleh
-int ground_truths[5][4][5];
+int ground_truths[5][4][11];
+
+int get_image_number(string imagename){
+	int imagenumber = 0;
+	string digit1 = imagename.substr(4,1);
+	if (digit1 == "4") imagenumber = 0;
+	if (digit1 == "5") imagenumber = 1;
+	if (digit1 == "1") {
+		string digit2 = imagename.substr(5,1);
+		if (digit2 == "3") imagenumber = 2;
+		if (digit2 == "4") imagenumber = 3;
+		if (digit2 == "5") imagenumber = 4;
+	}
+	return imagenumber;
+}
 
 void init_ground_truths() {
 	//dart 4
@@ -35,60 +49,60 @@ void init_ground_truths() {
 	ground_truths[0][3][0]=265;
 
 	//dart5
-	ground_truths[1][0][0]=65;
-	ground_truths[1][1][0]=145;
-	ground_truths[1][2][0]=122;
+	ground_truths[1][0][0]=64;
+	ground_truths[1][1][0]=149;
+	ground_truths[1][2][0]=116;
 	ground_truths[1][3][0]=203;
 
-	ground_truths[1][0][1]=268;
-	ground_truths[1][1][1]=237;
-	ground_truths[1][2][1]=327;
-	ground_truths[1][3][1]=315;
+	ground_truths[1][0][1]=62;
+	ground_truths[1][1][1]=263;
+	ground_truths[1][2][1]=111;
+	ground_truths[1][3][1]=317;
 
-	ground_truths[1][0][2]=407;
-	ground_truths[1][1][2]=203;
-	ground_truths[1][2][2]=459;
-	ground_truths[1][3][2]=272;
+	ground_truths[1][0][2]=199;
+	ground_truths[1][1][2]=229;
+	ground_truths[1][2][2]=248;
+	ground_truths[1][3][2]=282;
 
-	ground_truths[1][0][3]=463;
-	ground_truths[1][1][3]=163;
-	ground_truths[1][2][3]=516;
-	ground_truths[1][3][3]=222;
+	ground_truths[1][0][3]=255;
+	ground_truths[1][1][3]=178;
+	ground_truths[1][2][3]=305;
+	ground_truths[1][3][3]=234;
 
-	ground_truths[1][0][4]=508;
-	ground_truths[1][1][4]=227;
-	ground_truths[1][2][4]=554;
-	ground_truths[1][3][4]=295;
+	ground_truths[1][0][4]=293;
+	ground_truths[1][1][4]=256;
+	ground_truths[1][2][4]=345;
+	ground_truths[1][3][4]=309;
 
-	ground_truths[1][0][5]=585;
-	ground_truths[1][1][5]=175;
-	ground_truths[1][2][5]=650;
-	ground_truths[1][3][5]=245;
+	ground_truths[1][0][5]=384;
+	ground_truths[1][1][5]=196;
+	ground_truths[1][2][5]=439;
+	ground_truths[1][3][5]=249;
 
-	ground_truths[1][0][6]=642;
-	ground_truths[1][1][6]=216;
-	ground_truths[1][2][6]=695;
-	ground_truths[1][3][6]=300;
+	ground_truths[1][0][6]=430;
+	ground_truths[1][1][6]=245;
+	ground_truths[1][2][6]=484;
+	ground_truths[1][3][6]=301;
 
-	ground_truths[1][0][7]=726;
-	ground_truths[1][1][7]=162;
-	ground_truths[1][2][7]=790;
-	ground_truths[1][3][7]=233;
+	ground_truths[1][0][7]=516;
+	ground_truths[1][1][7]=184;
+	ground_truths[1][2][7]=561;
+	ground_truths[1][3][7]=242;
 
-	ground_truths[1][0][8]=774;
-	ground_truths[1][1][8]=235;
-	ground_truths[1][2][8]=827;
-	ground_truths[1][3][8]=306;
+	ground_truths[1][0][8]=560;
+	ground_truths[1][1][8]=260;
+	ground_truths[1][2][8]=614;
+	ground_truths[1][3][8]=314;
 
-	ground_truths[1][0][9]=861;
-	ground_truths[1][1][9]=176;
-	ground_truths[1][2][9]=916;
-	ground_truths[1][3][9]=239;
+	ground_truths[1][0][9]=649;
+	ground_truths[1][1][9]=199;
+	ground_truths[1][2][9]=695;
+	ground_truths[1][3][9]=249;
 
-	ground_truths[1][0][10]=895;
-	ground_truths[1][1][10]=236;
-	ground_truths[1][2][10]=942;
-	ground_truths[1][3][10]=301;
+	ground_truths[1][0][10]=678;
+	ground_truths[1][1][10]=257;
+	ground_truths[1][2][10]=729;
+	ground_truths[1][3][10]=311;
 
 	//dart13
 	ground_truths[2][0][0]=416;
@@ -124,7 +138,7 @@ void init_ground_truths() {
 	ground_truths[4][3][2]=215;
 }
 
-int get_num_faces(int ino){
+int get_num_actual_faces(int ino){
 	int numface = 0;
 	if (ino == 0) numface = 1;
 	if (ino == 1) numface = 11;
@@ -132,6 +146,17 @@ int get_num_faces(int ino){
 	if (ino == 3) numface = 2; 
 	if (ino == 4) numface = 3;
 	return numface; 
+}
+
+int get_num_detected_faces(int ino){
+	int numface = 0;
+	if (ino == 0) numface = 1;
+	if (ino == 1) numface = 11;
+	if (ino == 2) numface = 1; 
+	if (ino == 3) numface = 2; 
+	if (ino == 4) numface = 1;
+	return numface; 
+
 }
 
 float get_iou(int a[4], int b[4]) {
@@ -157,18 +182,20 @@ float get_iou(int a[4], int b[4]) {
 	}
 }
 
-int get_image_number(string imagename){
-	int imagenumber = 0;
-	string digit1 = imagename.substr(4,1);
-	if (digit1 == "4") imagenumber = 0;
-	if (digit1 == "5") imagenumber = 1;
-	if (digit1 == "1") {
-		string digit2 = imagename.substr(5,1);
-		if (digit2 == "3") imagenumber = 2;
-		if (digit2 == "4") imagenumber = 3;
-		if (digit2 == "5") imagenumber = 4;
-	}
-	return imagenumber;
+
+
+float calculate_f1_score (float precision, float recall) {
+	float f1_score = 2 * ((precision * recall) / (precision + recall));
+
+	// std::cout << "Precision" << std::endl;
+	// std::cout << precision << std::endl;
+
+	
+	std::cout << "Recall" << std::endl;
+	std::cout << recall << std::endl;
+	
+
+	return f1_score;
 }
 
 /** @function main */
@@ -210,23 +237,37 @@ void detectAndDisplay( Mat frame, int ino )
 	std::cout << "Faces detected:" << std::endl;
 	std::cout << faces.size() << std::endl;
 	std::cout << "Actual number of faces:" << std::endl;
-	std::cout << get_num_faces(ino) << std::endl;
+	std::cout << get_num_actual_faces(ino) << std::endl;
 
-       // 4. Draw box around faces found
+	//4. Calculate F1 score
+	float precision = ((float) get_num_detected_faces(ino)/ (float) faces.size());
+	float recall = ((float) get_num_detected_faces(ino) / (float) get_num_actual_faces(ino));
+	// std::cout << "get_num_detected:" << std::endl;
+	// std::cout << get_num_detected_faces(ino) << std::endl;
+	// std::cout << "faces.size" << std::endl;
+	// std::cout << faces.size() << std::endl;
+	// std::cout << "Precision" << std::endl;
+	// std::cout << precision << std::endl;
+	float f1_score = calculate_f1_score(precision, recall);
+	std::cout << "F1 score:" << std::endl;
+	std::cout << f1_score << std::endl;
+	
+
+       // 5. Draw box around faces found
 	for( int di = 0; di < faces.size(); di++ ){
 		//Draw green
 		rectangle(frame, Point(faces[di].x, faces[di].y), Point(faces[di].x + faces[di].width, faces[di].y + faces[di].height), Scalar( 0, 255, 0 ), 2);
 	}
 
-	//Draw red
-	for( int dj = 0; dj < get_num_faces(ino); dj++ ){	
+	//6.Draw red
+	for( int dj = 0; dj < get_num_actual_faces(ino); dj++ ){	
 		rectangle(frame, Point(ground_truths[ino][0][dj], ground_truths[ino][1][dj]), Point(ground_truths[ino][2][dj], ground_truths[ino][3][dj]), Scalar( 0, 0, 255 ), 2);
 	}
 
-	//Compare
+	//7.Compare
 	for( int i = 0; i < faces.size(); i++ ){
 		float best_iou = 0;
-		for ( int j = 0; j < get_num_faces(ino); j++ ){
+		for ( int j = 0; j < get_num_actual_faces(ino); j++ ){
 			int a[4] = {faces[i].x, faces[i].y, faces[i].x + faces[i].width, faces[i].y + faces[i].height};
 			int b[4] = {ground_truths[ino][0][j],ground_truths[ino][1][j],ground_truths[ino][2][j],ground_truths[ino][3][j]};
 			float iou = get_iou(a, b);
