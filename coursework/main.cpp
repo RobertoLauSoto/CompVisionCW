@@ -170,6 +170,7 @@ int get_image_number(string imagename){
 	return imagenumber;
 }
 
+//Calculate the f1 score
 float calculate_f1_score (float precision, float recall) {
 	float f1_score = 2 * ((precision * recall) / (precision + recall));
 	std::cout << "F1 score" << std::endl;
@@ -177,6 +178,29 @@ float calculate_f1_score (float precision, float recall) {
 	return f1_score;
 }
 
+//Calculate the intersection over union for two rectangles
+float get_iou(int a[4], int b[4]) {
+	int x1 = max(a[0], b[0]);
+	int y1 = max(a[1], b[1]);
+	int x2 = min(a[2], b[2]);
+	int y2 = min(a[3], b[3]);
+
+	int width = x2 - x1;
+	int height = y2 - y1;
+
+	if(width<0 || height<0){
+		return 0;
+	}
+	else {
+		int area_overlap = width * height;
+
+		int area_a = (a[2] - a[0])*(a[3] - a[1]);
+		int area_b = (b[2] - b[0])*(b[3] - b[1]);
+		int area_combined = area_a + area_b - area_overlap;
+		float iou = (float)area_overlap / (float)area_combined;
+		return iou; 
+	}
+}
 
 void threshold_image(cv::Mat_<uchar> &image, cv::Mat_<uchar> &output, uchar t){
 	output.create(image.size());
@@ -193,12 +217,18 @@ void threshold_image(cv::Mat_<uchar> &image, cv::Mat_<uchar> &output, uchar t){
 
 //Draw circles from the circle hough
 void draw_circles(int*** H, int rmin, int rmax, int threshold, Mat& originalimage){
+	int numcircles[originalimage.rows][originalimage.cols];
+	for (int y = 0; y < originalimage.rows; y ++){
+		for (int x = 0; x < originalimage.cols; x ++){
+			numcircles[y][x] = 0;
+		}
+	}
 	for (int y = 0; y < originalimage.rows; y ++){
 		for (int x = 0; x < originalimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
 				int votes = H[y][x][r];
-
 				if (votes > threshold){
+					numcircles[y][x]++;
 					circle(originalimage, Point(x, y), r, cvScalar(0,0,255), 1);
 				}
 			}
@@ -211,6 +241,7 @@ void draw_lines(vector<Vec2f> HL, int threshold, Mat& originalimage){
 
 }
 
+//Line hough transform
 int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold, const float thetaThreshold, const float thetaIncrCoeff){
 	cv::Mat_<float> dx;
 	cv::Mat_<float> dy;
@@ -280,8 +311,11 @@ int main( int argc, const char** argv ){
     cvtColor(colourimage, image, CV_BGR2GRAY);
 	std::vector<Rect> dartboards;
 	init_ground_truths();
-
 	int image_number = get_image_number(argv[1]);
+	//Draw ground truths
+	for( int dj = 0; dj < get_num_actual_dartboards(image_number); dj++ ){	
+		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
+	}
 
 	// 2. Load the Strong Classifier in a structure called `Cascade'
 	if( !cascade.load( cascade_name ) ){ printf("--(!)Error loading\n"); return -1; };
@@ -292,30 +326,55 @@ int main( int argc, const char** argv ){
     int threshold = 100;
 
 	// Hough
-    //int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
+    int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
 	//int **HL = hough_line_transform(image, mthreshold, 0.1, 360);
 
-	//draw_circles(HC, rmin, rmax, threshold, colourimage);
+	
+
+	draw_circles(HC, rmin, rmax, threshold, colourimage);
 	//draw_lines(HL, threshold, colourimage);
 
+
 	//ViolaJones
+	float vjthreshold = 0.25;
 	cascade.detectMultiScale(image, dartboards, 1.1, 1, 0|CV_HAAR_SCALE_IMAGE, Size(50, 50), Size(500,500) );
 	
 	//Print information
-	std::cout << "Dartboards detected:" << std::endl;
+	std::cout << "Potential dartboards detected:" << std::endl;
 	std::cout << dartboards.size() << std::endl;
 	std::cout << "Actual number of darboards:" << std::endl;
 	std::cout << get_num_actual_dartboards(image_number) << std::endl;
-
-	//Draw ground truths
-	for( int dj = 0; dj < get_num_actual_dartboards(image_number); dj++ ){	
-		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
-	}
 
 	//Draw detected dartboards
 	for(int di = 0; di < dartboards.size(); di++){
 		rectangle(colourimage, Point(dartboards[di].x, dartboards[di].y), Point(dartboards[di].x + dartboards[di].width, dartboards[di].y + dartboards[di].height), Scalar( 0, 255, 0 ), 2);
 	}
+
+	/*
+	//Compare
+	float ious[dartboards.size()];
+	int correctdetect = 0;
+	for( int i = 0; i < dartboards.size(); i++ ){
+		//Correctly detected number of dartboards
+		float best_iou = 0;
+		for ( int j = 0; j < get_num_actual_dartboards(image_number); j++ ){
+			int a[4] = {dartboards[i].x, dartboards[i].y, dartboards[i].x + dartboards[i].width, dartboards[i].y + dartboards[i].height};
+			int b[4] = {ground_truths[image_number][0][j],ground_truths[image_number][1][j],ground_truths[image_number][2][j],ground_truths[image_number][3][j]};
+			float iou = get_iou(a, b);
+			if (iou > best_iou) best_iou = iou;
+		}
+		ious[i] = best_iou;
+		
+ 		if (correctdetect < get_num_actual_dartboards(image_number)){
+			if (best_iou > vjthreshold){
+				correctdetect++;
+				std::cout << "Dartboard detected with iou:" << std::endl;
+				std::cout << best_iou << std::endl;
+			}
+		}
+	}
+	//std::cout << correctdetect << std::endl; // here incorrect
+	*/
 
     imwrite("output.jpg", colourimage );
     return 0;
