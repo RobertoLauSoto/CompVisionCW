@@ -332,7 +332,7 @@ int main( int argc, const char** argv ){
 	}
 
 	//True if want to draw extra data onto the image
-	bool drawextra = true;
+	bool drawextra = false;
 
 	//Radius max and min
 	int rmin = 20;
@@ -372,11 +372,13 @@ int main( int argc, const char** argv ){
 	std::cout << get_num_actual_dartboards(image_number) << std::endl;
 
 	//Print f1 score
+	/*
 	float precision = ((float) get_num_detected_dartboards(image_number)/ (float) dartboards.size());
 	float recall = ((float) get_num_detected_dartboards(image_number) / (float) get_num_actual_dartboards(image_number));
 	float f1_score = calculate_f1_score(precision, recall);
 	std::cout << "F1 score:" << std::endl;
 	std::cout << f1_score << std::endl;
+	*/
 
 	//Draw detected dartboards
 	if (drawextra){
@@ -415,7 +417,7 @@ int main( int argc, const char** argv ){
 			for (int x = 0; x < colourimage.cols; x ++){
 				//If there are more than a threshold number of circle centres at the point
 				if (numcircles[y][x] > thresh_samecentre){
-					//check if point is within rectangle
+					//check if point is within vj area
 					if (dartboards[db].x < x && x < dartboards[db].x + dartboards[db].width) {
 						if (dartboards[db].y < y && y < dartboards[db].y + dartboards[db].height) {
 							//point is within rectangle
@@ -433,6 +435,7 @@ int main( int argc, const char** argv ){
 				
 			}
 		}
+
 		//If the number of centres of multiple circles is over the threshold then a dartboard is detected
 		//This combines both hough transform and viola jones
 		if (dbscore > thresh_numcentres){
@@ -440,6 +443,7 @@ int main( int argc, const char** argv ){
 		}
 		//std::cout << dbscore << std::endl;
 	}
+
 
 
 
@@ -474,6 +478,6 @@ int main( int argc, const char** argv ){
 	//std::cout << correctdetect << std::endl; // here incorrect
 	*/
 
-    imwrite("output.jpg", colourimage );
+    imwrite("detected.jpg", colourimage );
     return 0;
 }
