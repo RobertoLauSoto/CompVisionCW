@@ -142,6 +142,29 @@ int get_num_actual_dartboards(int ino){
 	return dartnum; 
 }
 
+int get_num_detected_dartboards(int ino){
+	int detected = 0;
+	if (ino == 0) detected = 1;
+	if (ino == 1) detected = 1;
+	if (ino == 2) detected = 1; 
+	if (ino == 3) detected = 1; 
+	if (ino == 4) detected = 1;
+	if (ino == 5) detected = 1;
+	if (ino == 6) detected = 0;
+	if (ino == 7) detected = 1;
+	if (ino == 8) detected = 1;
+	if (ino == 9) detected = 1;
+	if (ino == 10) detected = 2;
+	if (ino == 11) detected = 0;
+	if (ino == 12) detected = 1;
+	if (ino == 13) detected = 1;
+	if (ino == 14) detected = 2;
+	if (ino == 15) detected = 1;
+
+	return detected;
+
+}
+
 //From the given file get the image number
 int get_image_number(string imagename){
 	int imagenumber = 0;
@@ -173,8 +196,6 @@ int get_image_number(string imagename){
 //Calculate the f1 score
 float calculate_f1_score (float precision, float recall) {
 	float f1_score = 2 * ((precision * recall) / (precision + recall));
-	std::cout << "F1 score" << std::endl;
-	std::cout << f1_score << std::endl;
 	return f1_score;
 }
 
@@ -217,18 +238,11 @@ void threshold_image(cv::Mat_<uchar> &image, cv::Mat_<uchar> &output, uchar t){
 
 //Draw circles from the circle hough
 void draw_circles(int*** H, int rmin, int rmax, int threshold, Mat& originalimage){
-	int numcircles[originalimage.rows][originalimage.cols];
-	for (int y = 0; y < originalimage.rows; y ++){
-		for (int x = 0; x < originalimage.cols; x ++){
-			numcircles[y][x] = 0;
-		}
-	}
 	for (int y = 0; y < originalimage.rows; y ++){
 		for (int x = 0; x < originalimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
 				int votes = H[y][x][r];
 				if (votes > threshold){
-					numcircles[y][x]++;
 					circle(originalimage, Point(x, y), r, cvScalar(0,0,255), 1);
 				}
 			}
@@ -317,38 +331,122 @@ int main( int argc, const char** argv ){
 		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
 	}
 
-	// 2. Load the Strong Classifier in a structure called `Cascade'
+	//True if want to draw extra data onto the image
+	bool drawextra = true;
+
+	//Radius max and min
+	int rmin = 20;
+    int rmax = 150;
+
+	//Magnitude threshold
+	int mthreshold = 80;
+
+	//Accumulator threshold
+	int threshold = 100;
+
+	//Number of circles with same centre threshold
+	int thresh_samecentre = 2;
+
+	//Threshold for number of centre of circles over number of circles threshold
+	int thresh_numcentres = 20; 
+
+	//Load the Strong Classifier in a structure called `Cascade'
 	if( !cascade.load( cascade_name ) ){ printf("--(!)Error loading\n"); return -1; };
 
-    int rmin = 10;
-    int rmax = 150;
-    int mthreshold = 80;
-    int threshold = 100;
-
-	// Hough
+	// Hough Transform
     int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
 	//int **HL = hough_line_transform(image, mthreshold, 0.1, 360);
 
-	
-
-	draw_circles(HC, rmin, rmax, threshold, colourimage);
+	//Draw Hough Output
+	if (drawextra) draw_circles(HC, rmin, rmax, threshold, colourimage);
 	//draw_lines(HL, threshold, colourimage);
-
 
 	//ViolaJones
 	float vjthreshold = 0.25;
 	cascade.detectMultiScale(image, dartboards, 1.1, 1, 0|CV_HAAR_SCALE_IMAGE, Size(50, 50), Size(500,500) );
 	
 	//Print information
-	std::cout << "Potential dartboards detected:" << std::endl;
+	std::cout << "Potential dartboards detected with vj:" << std::endl;
 	std::cout << dartboards.size() << std::endl;
 	std::cout << "Actual number of darboards:" << std::endl;
 	std::cout << get_num_actual_dartboards(image_number) << std::endl;
 
+	//Print f1 score
+	float precision = ((float) get_num_detected_dartboards(image_number)/ (float) dartboards.size());
+	float recall = ((float) get_num_detected_dartboards(image_number) / (float) get_num_actual_dartboards(image_number));
+	float f1_score = calculate_f1_score(precision, recall);
+	std::cout << "F1 score:" << std::endl;
+	std::cout << f1_score << std::endl;
+
 	//Draw detected dartboards
-	for(int di = 0; di < dartboards.size(); di++){
-		rectangle(colourimage, Point(dartboards[di].x, dartboards[di].y), Point(dartboards[di].x + dartboards[di].width, dartboards[di].y + dartboards[di].height), Scalar( 0, 255, 0 ), 2);
+	if (drawextra){
+		for(int di = 0; di < dartboards.size(); di++){
+			rectangle(colourimage, Point(dartboards[di].x, dartboards[di].y), Point(dartboards[di].x + dartboards[di].width, dartboards[di].y + dartboards[di].height), Scalar( 20, 255, 20 ), 1);
+		}
 	}
+
+	//Combine Viola Jones and Hough
+
+	int numcircles[colourimage.rows][colourimage.cols];
+	//Init
+	for (int y = 0; y < colourimage.rows; y ++){
+		for (int x = 0; x < colourimage.cols; x ++){
+			numcircles[y][x] = 0;
+		}
+	}
+
+	//For each point ++ if has a centre of circle of any radius 
+	for (int y = 0; y < colourimage.rows; y ++){
+		for (int x = 0; x < colourimage.cols; x ++){
+			for (int r = rmin; r < rmax; r ++){
+				int votes = HC[y][x][r];
+				if (votes > threshold){
+					numcircles[y][x]++;
+				}
+			}
+		}
+	}
+
+	//Loop over vj areas
+	for(int db = 0; db < dartboards.size(); db++){
+		//score for each "green square" / potential vj detected dartboard
+		int dbscore = 0;
+		for (int y = 0; y < colourimage.rows; y ++){
+			for (int x = 0; x < colourimage.cols; x ++){
+				//If there are more than a threshold number of circle centres at the point
+				if (numcircles[y][x] > thresh_samecentre){
+					//check if point is within rectangle
+					if (dartboards[db].x < x && x < dartboards[db].x + dartboards[db].width) {
+						if (dartboards[db].y < y && y < dartboards[db].y + dartboards[db].height) {
+							//point is within rectangle
+							//check for more centres nearby
+							for (int y2 = y-1; y2 < y+1; y2++){
+								for (int x2 = x-1; x2 < x+1; x2++){
+									if (numcircles[y2][x2] != 0) numcircles[y][x]++;
+								}
+							}
+							if (drawextra) circle(colourimage, Point(x, y), 1, cvScalar(255,0,0), 1);
+							dbscore = dbscore + numcircles[y][x];
+						} 	
+					} 
+				}
+				
+			}
+		}
+		//If the number of centres of multiple circles is over the threshold then a dartboard is detected
+		//This combines both hough transform and viola jones
+		if (dbscore > thresh_numcentres){
+			rectangle(colourimage, Point(dartboards[db].x, dartboards[db].y), Point(dartboards[db].x + dartboards[db].width, dartboards[db].y + dartboards[db].height), Scalar( 0, 255, 0 ), 3);
+		}
+		//std::cout << dbscore << std::endl;
+	}
+
+
+
+
+
+
+
 
 	/*
 	//Compare
