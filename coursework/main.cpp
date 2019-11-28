@@ -352,6 +352,7 @@ int main( int argc, const char** argv ){
 	std::vector<Rect> dartboards;
 	init_ground_truths();
 	int image_number = get_image_number(argv[1]);
+	int numdbpass = 0;
 
 	//-------------------------
 	//Variables and thresholds
@@ -424,8 +425,8 @@ int main( int argc, const char** argv ){
 	int **HL = hough_line_transform(image, mthreshold, 0.1, theta_numsteps, rhomax);
 
 	//Draw Hough Output
-	if (drawextra) draw_circles(HC, rmin, rmax, thresh_acc_cirles, colourimage);
 	if (drawextra) draw_lines(HL, thresh_acc_lines, theta_numsteps, rhomax, colourimage);
+	if (drawextra) draw_circles(HC, rmin, rmax, thresh_acc_cirles, colourimage);
 
 
 	//------------------------------
@@ -439,7 +440,7 @@ int main( int argc, const char** argv ){
 		}
 	}
 
-	//For each point ++ if has a centre of circle of any radius 
+	//Circle Centre scoring
 	for (int y = 0; y < colourimage.rows; y ++){
 		for (int x = 0; x < colourimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
@@ -451,7 +452,7 @@ int main( int argc, const char** argv ){
 		}
 	}
 
-	//Loop over vj areas
+	//Loop over Viola Jones areas
 	for(int db = 0; db < dartboards.size(); db++){
 		//score for each "green square" / potential vj detected dartboard
 		int dbscore = 0;
@@ -462,7 +463,7 @@ int main( int argc, const char** argv ){
 					//check if point is within vj area
 					if (dartboards[db].x < x && x < dartboards[db].x + dartboards[db].width) {
 						if (dartboards[db].y < y && y < dartboards[db].y + dartboards[db].height) {
-							//point is within rectangle
+							//Point IS within area
 							//check for more centres nearby
 							for (int y2 = y-1; y2 < y+1; y2++){
 								for (int x2 = x-1; x2 < x+1; x2++){
@@ -481,9 +482,9 @@ int main( int argc, const char** argv ){
 		//If the number of centres of multiple circles is over the threshold then a dartboard is detected
 		//This combines both hough transform and viola jones
 		if (dbscore > thresh_numcentres){
+			numdbpass++;
 			rectangle(colourimage, Point(dartboards[db].x, dartboards[db].y), Point(dartboards[db].x + dartboards[db].width, dartboards[db].y + dartboards[db].height), Scalar( 0, 255, 0 ), 3);
 		}
-		//std::cout << dbscore << std::endl;
 	}
 
 	//-------------------
@@ -518,6 +519,13 @@ int main( int argc, const char** argv ){
 	}
 	//std::cout << correctdetect << std::endl; // here incorrect
 	*/
+
+	//-------------------------------------
+	//Output number of detected dartboards
+	//-------------------------------------
+	std::cout << " " << std::endl;
+	std::cout << "Number of dartboards passing all detectors:" << std::endl;
+	std::cout << numdbpass << std::endl;
 
     imwrite("detected.jpg", colourimage );
     return 0;
