@@ -237,13 +237,13 @@ void threshold_image(cv::Mat_<uchar> &image, cv::Mat_<uchar> &output, uchar t){
 }
 
 //Draw circles from the circle hough
-void draw_circles(int*** H, int rmin, int rmax, int threshold, Mat& originalimage){
+void draw_circles(int*** H, int rmin, int rmax, int thresh_acc, Mat& originalimage){
 	for (int y = 0; y < originalimage.rows; y ++){
 		for (int x = 0; x < originalimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
-				int votes = H[y][x][r];
-				if (votes > threshold){
-					circle(originalimage, Point(x, y), r, cvScalar(0,0,255), 1);
+				int acc = H[y][x][r];
+				if (acc > thresh_acc){
+					circle(originalimage, Point(x, y), r, cvScalar(3,140,252), 1);
 				}
 			}
 		}
@@ -251,34 +251,60 @@ void draw_circles(int*** H, int rmin, int rmax, int threshold, Mat& originalimag
 }
 
 //Draw lines from the line hough
-void draw_lines(vector<Vec2f> HL, int threshold, Mat& originalimage){
+void draw_lines(int** HL, int thresh_acc, int theta_numsteps, int rhomax, Mat& originalimage){
+	float trads = (2*CV_PI) / (float)theta_numsteps;
+	for (int rho = 0; rho < rhomax; rho++){
+		float radcount = 0;
+		for (int theta = 0; theta < theta_numsteps; theta++){
+			int acc = HL[rho][theta];
+			if (acc > thresh_acc){
+				int x = rho * cosf(radcount);
+				int y = rho * sinf(radcount);
+				
+				int x1 = x - y * 100;
+				int x2 = x + y * 100;
+				int y1 = y + x * 100;
+				int y2 = y - x * 100;
 
+				line(originalimage, Point(x1, y1), Point(x2, y2), Scalar(255,0,123), 1);
+			}
+			radcount += trads;
+		}
+	}
 }
 
 //Line hough transform
-int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold, const float thetaThreshold, const float thetaIncrCoeff){
+int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold, const float thresh_theta, const int theta_numsteps, const int rhomax){
 	cv::Mat_<float> dx;
 	cv::Mat_<float> dy;
 	cv::Mat_<float> mag;
 	cv::Mat_<float> dir;
-	
-    sobel(image, dx, dy, mag, dir);
-	float thetaIncr = (2*CV_PI) / thetaIncrCoeff;
-	int max = mag.rows + mag.cols + 1;
-	int **HL = malloc2dArray(max, 360);
-	
-	for (int i = 0; i < mag.rows; i++){
-		for (int j = 0; j < mag.cols; j ++){
-			//Magnitude threshold
-			if (mag(i,j) > mthreshold){
-				float direction = dir(i, j);
-				int r = i*cosf(direction) + j * sinf(direction);
+	sobel(image, dx, dy, mag, dir);
 
-				HL[1][int(direction)]++;
+	//Allocate array
+	int **HL = malloc2dArray(rhomax, theta_numsteps);
+
+	//Convert to radians
+	float thetaIncr = (2*CV_PI) / (float)theta_numsteps;
+
+	for (int i = 0; i < mag.rows; i++){
+		for (int j = 0; j < mag.cols; j++){
+			if (mag(i, j) > mthreshold){
+				float direction = dir(i, j);
+				for (float theta = direction - thresh_theta; theta < direction + thresh_theta; theta += thetaIncr){
+					int rho = j * cosf(theta) + i * sinf(theta);
+					if (rho < 0 || rho >= rhomax)
+						continue;
+
+					int thetaDeg = theta / thetaIncr;
+					if (thetaDeg < 0) thetaDeg += theta_numsteps;
+					if (thetaDeg > theta_numsteps) thetaDeg -= theta_numsteps;
+
+					HL[rho][thetaDeg]++;
+				}
 			}
 		}
 	}
-
 	return HL;
 }
 
@@ -326,23 +352,25 @@ int main( int argc, const char** argv ){
 	std::vector<Rect> dartboards;
 	init_ground_truths();
 	int image_number = get_image_number(argv[1]);
-	//Draw ground truths
-	for( int dj = 0; dj < get_num_actual_dartboards(image_number); dj++ ){	
-		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
-	}
 
+	//-------------------------
+	//Variables and thresholds
+	//-------------------------
 	//True if want to draw extra data onto the image
-	bool drawextra = false;
+	bool drawextra = true;
 
 	//Radius max and min
-	int rmin = 20;
+	int rmin = 25;
     int rmax = 150;
 
 	//Magnitude threshold
 	int mthreshold = 80;
 
-	//Accumulator threshold
-	int threshold = 100;
+	//Accumulator threshold for circles
+	int thresh_acc_cirles = 100;
+
+	//Accumulator threshold for lines
+	int thresh_acc_lines = 50;
 
 	//Number of circles with same centre threshold
 	int thresh_samecentre = 2;
@@ -350,18 +378,19 @@ int main( int argc, const char** argv ){
 	//Threshold for number of centre of circles over number of circles threshold
 	int thresh_numcentres = 20; 
 
+	//Number of steps theta goes through per 2 pi for houghlines
+	int theta_numsteps = 720;
+
+	//Highest value of rho in houghlines
+	int rhomax = 700;
+
+
+	//------------
+	//ViolaJones
+	//------------
 	//Load the Strong Classifier in a structure called `Cascade'
 	if( !cascade.load( cascade_name ) ){ printf("--(!)Error loading\n"); return -1; };
 
-	// Hough Transform
-    int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
-	//int **HL = hough_line_transform(image, mthreshold, 0.1, 360);
-
-	//Draw Hough Output
-	if (drawextra) draw_circles(HC, rmin, rmax, threshold, colourimage);
-	//draw_lines(HL, threshold, colourimage);
-
-	//ViolaJones
 	float vjthreshold = 0.25;
 	cascade.detectMultiScale(image, dartboards, 1.1, 1, 0|CV_HAAR_SCALE_IMAGE, Size(50, 50), Size(500,500) );
 	
@@ -387,8 +416,21 @@ int main( int argc, const char** argv ){
 		}
 	}
 
-	//Combine Viola Jones and Hough
 
+	//-----------------
+	// Hough Transform
+	//-----------------
+    int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
+	int **HL = hough_line_transform(image, mthreshold, 0.1, theta_numsteps, rhomax);
+
+	//Draw Hough Output
+	if (drawextra) draw_circles(HC, rmin, rmax, thresh_acc_cirles, colourimage);
+	if (drawextra) draw_lines(HL, thresh_acc_lines, theta_numsteps, rhomax, colourimage);
+
+
+	//------------------------------
+	//Combine Viola Jones and Hough
+	//------------------------------
 	int numcircles[colourimage.rows][colourimage.cols];
 	//Init
 	for (int y = 0; y < colourimage.rows; y ++){
@@ -402,7 +444,7 @@ int main( int argc, const char** argv ){
 		for (int x = 0; x < colourimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
 				int votes = HC[y][x][r];
-				if (votes > threshold){
+				if (votes > thresh_acc_cirles){
 					numcircles[y][x]++;
 				}
 			}
@@ -444,13 +486,12 @@ int main( int argc, const char** argv ){
 		//std::cout << dbscore << std::endl;
 	}
 
-
-
-
-
-
-
-
+	//-------------------
+	//Draw ground truths
+	//-------------------
+	for( int dj = 0; dj < get_num_actual_dartboards(image_number); dj++ ){	
+		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
+	}
 
 	/*
 	//Compare
