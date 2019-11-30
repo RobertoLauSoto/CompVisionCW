@@ -5,6 +5,7 @@
 #include "sobel.h"
 #include "3dArray.h"
 #include "convolution.h"
+#include <cmath>
 
 using namespace std;
 using namespace cv;
@@ -142,12 +143,13 @@ int get_num_actual_dartboards(int ino){
 	return dartnum; 
 }
 
+//Manual input for f1score - done after detector was finished
 int get_num_detected_dartboards(int ino){
 	int detected = 0;
 	if (ino == 0) detected = 1;
 	if (ino == 1) detected = 1;
 	if (ino == 2) detected = 1; 
-	if (ino == 3) detected = 1; 
+	if (ino == 3) detected = 0; 
 	if (ino == 4) detected = 1;
 	if (ino == 5) detected = 1;
 	if (ino == 6) detected = 0;
@@ -156,7 +158,7 @@ int get_num_detected_dartboards(int ino){
 	if (ino == 9) detected = 1;
 	if (ino == 10) detected = 2;
 	if (ino == 11) detected = 0;
-	if (ino == 12) detected = 1;
+	if (ino == 12) detected = 0;
 	if (ino == 13) detected = 1;
 	if (ino == 14) detected = 2;
 	if (ino == 15) detected = 1;
@@ -223,17 +225,41 @@ float get_iou(int a[4], int b[4]) {
 	}
 }
 
-void threshold_image(cv::Mat_<uchar> &image, cv::Mat_<uchar> &output, uchar t){
-	output.create(image.size());
-	for (int i = 0; i < image.rows; i++){
-		for (int j = 0; j < image.cols; j++){
-			if (image(i, j) > t){
-				output(i, j) = 255;
-			} else {
-				output(i, j) = 0;
+//Check if a line goes through a circle
+bool circle_line_intersect(int cx, int cy, int r, int x1, int y1, int x2, int y2){
+	bool intersect = false;
+	float num = (x2 - x1) * cx + (y1 - y2) * cy + (x1 - x2) * y1 + (y2 - y1) * x1;
+	float denom = sqrt( (x2 - x1)*(x2 - x1) + (y1 - y2)*(y1 - y2) );
+	if (num < 0) num = num - (2*num);
+	if ((num / denom) > r) intersect = 1; 
+
+	return intersect;
+}
+
+//Output hough spaces
+void output_hough_circle(int*** HC, const cv::Mat_<uchar> &image, const int rmin, const int rmax, cv::Mat_<float> &mag){
+	cv::Mat_<float> output = mag.clone();
+	cv::Mat_<float> temp = mag.clone();
+	float max = 0.0;
+	float min = 1000.0;
+	for (int i = 0; i < mag.cols; i++){
+		for (int j = 0; j < mag.rows; j++){
+			float total = 0.0;
+			for (int r = rmin; r < rmax; r++){
+				total += (float)HC[j][i][r];
 			}
+			if (total > max) max = total;
+			if (total < min) min = total;
+			temp(j,i) = total;
 		}
 	}
+	for (int i = 0; i < mag.cols; i++){
+		for (int j = 0; j < mag.rows; j++){
+			output(j,i) = min + temp(j,i) * 255.0 / max;
+		}
+	}
+
+	imwrite("houghcircle.jpg", output);
 }
 
 //Draw circles from the circle hough
@@ -273,8 +299,34 @@ void draw_lines(int** HL, int thresh_acc, int theta_numsteps, int rhomax, Mat& o
 	}
 }
 
+//GO through hough lines, find out if they intersect circle 
+int hough_lines(int** HL, int thresh_acc, int theta_numsteps, int rhomax, Mat& originalimage, bool drawhough, int bestcentre[3]){
+	int totallines = 0;
+	float trads = (2*CV_PI) / (float)theta_numsteps;
+	for (int rho = 0; rho < rhomax; rho++){
+		float radcount = 0;
+		for (int theta = 0; theta < theta_numsteps; theta++){
+			int acc = HL[rho][theta];
+			if (acc > thresh_acc){
+				int x = rho * cosf(radcount);
+				int y = rho * sinf(radcount);
+				
+				int x1 = x - y * 20;
+				int x2 = x + y * 20;
+				int y1 = y + x * 20;
+				int y2 = y - x * 20;
+
+				if (circle_line_intersect(bestcentre[1], bestcentre[2], 20, x1, y1, x2, y2) == 1) totallines++;
+				if (drawhough) line(originalimage, Point(x1, y1), Point(x2, y2), Scalar(255,0,123), 1);
+			}
+			radcount += trads;
+		}
+	}
+	return totallines;
+}
+
 //Line hough transform
-int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold, const float thresh_theta, const int theta_numsteps, const int rhomax){
+int** hough_line_transform(std::vector<Rect> dartboards, int db, const cv::Mat_<uchar> &image, const uchar thresh_magnitude, const float thresh_theta, const int theta_numsteps, const int rhomax){
 	cv::Mat_<float> dx;
 	cv::Mat_<float> dy;
 	cv::Mat_<float> mag;
@@ -285,18 +337,16 @@ int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold,
 	int **HL = malloc2dArray(rhomax, theta_numsteps);
 
 	//Convert to radians
-	float thetaIncr = (2*CV_PI) / (float)theta_numsteps;
+	float theta_incr = (2*CV_PI) / (float)theta_numsteps;
 
-	for (int i = 0; i < mag.rows; i++){
-		for (int j = 0; j < mag.cols; j++){
-			if (mag(i, j) > mthreshold){
+	for (int i = dartboards[db].y; i < dartboards[db].y + dartboards[db].height; i++){
+		for (int j = dartboards[db].x; j < dartboards[db].x + dartboards[db].width; j++){
+			if (mag(i, j) > thresh_magnitude){
 				float direction = dir(i, j);
-				for (float theta = direction - thresh_theta; theta < direction + thresh_theta; theta += thetaIncr){
+				for (float theta = direction - thresh_theta; theta < direction + thresh_theta; theta += theta_incr){
 					int rho = j * cosf(theta) + i * sinf(theta);
-					if (rho < 0 || rho >= rhomax)
-						continue;
-
-					int thetaDeg = theta / thetaIncr;
+					if (rho < 0 || rho >= rhomax) continue;
+					int thetaDeg = theta / theta_incr;
 					if (thetaDeg < 0) thetaDeg += theta_numsteps;
 					if (thetaDeg > theta_numsteps) thetaDeg -= theta_numsteps;
 
@@ -305,26 +355,41 @@ int** hough_line_transform(const cv::Mat_<uchar> &image, const uchar mthreshold,
 			}
 		}
 	}
+
 	return HL;
 }
 
 //Circle hough transform
-int*** hough_circle_transform(const cv::Mat_<uchar> &image, const uchar mthreshold, const int rmin, const int rmax, const float thetaThreshold, const float thetaIncrCoeff){
+int*** hough_circle_transform(const cv::Mat_<uchar> &image, const uchar thresh_magnitude, const int rmin, const int rmax, const float thetaThreshold, const float thetaIncrCoeff){
 	cv::Mat_<float> dx;
 	cv::Mat_<float> dy;
 	cv::Mat_<float> mag;
 	cv::Mat_<float> dir;
 	
     sobel(image, dx, dy, mag, dir);
+
+	//Draw magnitude image
+	cv::Mat_<uchar> magout = mag.clone();
+	for (int i = 0; i < mag.rows; i ++){
+		for (int j = 0; j < mag.cols; j ++){
+			if (mag(i,j) > thresh_magnitude){
+				magout(i,j) = 255;
+			} else {
+				magout(i,j) = 0;
+			}
+		}
+	}
+	imwrite("magnitude.jpg", magout);
+
 	int ***HC = malloc3dArray(image.rows, image.cols, rmax);
-    float thetaIncr = (2*CV_PI) / thetaIncrCoeff;
+    float theta_incr = (2*CV_PI) / thetaIncrCoeff;
 
 	for (int i = 0; i < mag.rows; i ++){
 		for (int j = 0; j < mag.cols; j ++){
-			if (mag(i,j) > mthreshold){
+			if (mag(i,j) > thresh_magnitude){
 				for (int r = rmin; r < rmax; r++){
 					float direction = dir(i, j);
-					for (float theta = direction - thetaThreshold; theta < direction + thetaThreshold; theta += thetaIncr){	
+					for (float theta = direction - thetaThreshold; theta < direction + thetaThreshold; theta += theta_incr){	
 						for (int a = -1; a <= 1; a +=2){
 							for (int b = -1; b <= 1; b +=2){
 								int x0 = j + (a*r) * cosf(theta);
@@ -341,6 +406,8 @@ int*** hough_circle_transform(const cv::Mat_<uchar> &image, const uchar mthresho
 		}
 	}
 
+	output_hough_circle(HC, image, rmin, rmax, mag);
+
 	return HC;
 }
 
@@ -350,6 +417,8 @@ int main( int argc, const char** argv ){
     cv::Mat_<uchar> image;
     cvtColor(colourimage, image, CV_BGR2GRAY);
 	std::vector<Rect> dartboards;
+	std::vector<Rect> detections;
+	std::vector<float> confidences;
 	init_ground_truths();
 	int image_number = get_image_number(argv[1]);
 	int numdbpass = 0;
@@ -358,32 +427,40 @@ int main( int argc, const char** argv ){
 	//Variables and thresholds
 	//-------------------------
 	//True if want to draw extra data onto the image
-	bool drawextra = true;
+	bool drawvj = true;
+	bool drawhough = true;
+	bool drawunaveraged = true;
 
 	//Radius max and min
 	int rmin = 25;
     int rmax = 150;
 
 	//Magnitude threshold
-	int mthreshold = 80;
+	int thresh_magnitude = 80;
 
 	//Accumulator threshold for circles
 	int thresh_acc_cirles = 100;
 
 	//Accumulator threshold for lines
-	int thresh_acc_lines = 50;
+	int thresh_acc_lines = 25;
 
-	//Number of circles with same centre threshold
+	//Number of circles +1 with same centre threshold
 	int thresh_samecentre = 2;
 
 	//Threshold for number of centre of circles over number of circles threshold
-	int thresh_numcentres = 20; 
+	int thresh_numcentres = 20;
+
+	// Threshold for number of lines going through the centre of a dartboard
+	int thresh_numlines = 100; 
 
 	//Number of steps theta goes through per 2 pi for houghlines
 	int theta_numsteps = 720;
 
 	//Highest value of rho in houghlines
 	int rhomax = 700;
+
+	//Threshold for iou to tell if two vj boxes look at the same dartboard
+	int thresh_overlap = 0.25;
 
 
 	//------------
@@ -395,42 +472,25 @@ int main( int argc, const char** argv ){
 	float vjthreshold = 0.25;
 	cascade.detectMultiScale(image, dartboards, 1.1, 1, 0|CV_HAAR_SCALE_IMAGE, Size(50, 50), Size(500,500) );
 	
-	//Print information
-	std::cout << "Potential dartboards detected with vj:" << std::endl;
-	std::cout << dartboards.size() << std::endl;
-	std::cout << "Actual number of darboards:" << std::endl;
-	std::cout << get_num_actual_dartboards(image_number) << std::endl;
-
-	//Print f1 score
-	/*
-	float precision = ((float) get_num_detected_dartboards(image_number)/ (float) dartboards.size());
-	float recall = ((float) get_num_detected_dartboards(image_number) / (float) get_num_actual_dartboards(image_number));
-	float f1_score = calculate_f1_score(precision, recall);
-	std::cout << "F1 score:" << std::endl;
-	std::cout << f1_score << std::endl;
-	*/
-
-	//Draw detected dartboards
-	if (drawextra){
+	//Draw viola jones detected dartboards
+	if (drawvj){
 		for(int di = 0; di < dartboards.size(); di++){
 			rectangle(colourimage, Point(dartboards[di].x, dartboards[di].y), Point(dartboards[di].x + dartboards[di].width, dartboards[di].y + dartboards[di].height), Scalar( 20, 255, 20 ), 1);
 		}
 	}
-
+	//------------
 
 	//-----------------
-	// Hough Transform
+	// Hough Circle Transform
 	//-----------------
-    int ***HC = hough_circle_transform(image, mthreshold, rmin, rmax, 0.1, 360.0);
-	int **HL = hough_line_transform(image, mthreshold, 0.1, theta_numsteps, rhomax);
-
-	//Draw Hough Output
-	if (drawextra) draw_lines(HL, thresh_acc_lines, theta_numsteps, rhomax, colourimage);
-	if (drawextra) draw_circles(HC, rmin, rmax, thresh_acc_cirles, colourimage);
+    int ***HC = hough_circle_transform(image, thresh_magnitude, rmin, rmax, 0.1, 360.0);
+	//Draw Hough Circle Output
+	if (drawhough) draw_circles(HC, rmin, rmax, thresh_acc_cirles, colourimage);
+	//-----------------
 
 
 	//------------------------------
-	//Combine Viola Jones and Hough
+	//Circle centre scoring
 	//------------------------------
 	int numcircles[colourimage.rows][colourimage.cols];
 	//Init
@@ -440,7 +500,7 @@ int main( int argc, const char** argv ){
 		}
 	}
 
-	//Circle Centre scoring
+	//Circle Centre basic scoring
 	for (int y = 0; y < colourimage.rows; y ++){
 		for (int x = 0; x < colourimage.cols; x ++){
 			for (int r = rmin; r < rmax; r ++){
@@ -451,11 +511,16 @@ int main( int argc, const char** argv ){
 			}
 		}
 	}
+	//------------------------------
 
+
+	//--------------------------------
+	//Evaluation
+	//--------------------------------
 	//Loop over Viola Jones areas
 	for(int db = 0; db < dartboards.size(); db++){
 		//score for each "green square" / potential vj detected dartboard
-		int dbscore = 0;
+		int dbcentrescore = 0;
 		for (int y = 0; y < colourimage.rows; y ++){
 			for (int x = 0; x < colourimage.cols; x ++){
 				//If there are more than a threshold number of circle centres at the point
@@ -470,22 +535,64 @@ int main( int argc, const char** argv ){
 									if (numcircles[y2][x2] != 0) numcircles[y][x]++;
 								}
 							}
-							if (drawextra) circle(colourimage, Point(x, y), 1, cvScalar(255,0,0), 1);
-							dbscore = dbscore + numcircles[y][x];
+
+							if (drawhough) circle(colourimage, Point(x, y), 1, cvScalar(255,0,0), 1);
+
+							dbcentrescore = dbcentrescore + numcircles[y][x];
 						} 	
 					} 
 				}
-				
 			}
 		}
 
-		//If the number of centres of multiple circles is over the threshold then a dartboard is detected
-		//This combines both hough transform and viola jones
-		if (dbscore > thresh_numcentres){
-			numdbpass++;
-			rectangle(colourimage, Point(dartboards[db].x, dartboards[db].y), Point(dartboards[db].x + dartboards[db].width, dartboards[db].y + dartboards[db].height), Scalar( 0, 255, 0 ), 3);
+		//Find best centre point in area
+		int bestcentre[3] = {0,0,0};
+		for (int x = dartboards[db].x; x < dartboards[db].x + dartboards[db].width; x++){
+			for (int y = dartboards[db].y; y < dartboards[db].y + dartboards[db].height; y++){
+				if (numcircles[y][x] > bestcentre[0]){
+					bestcentre[0] = numcircles[y][x];
+					bestcentre[1] = x;
+					bestcentre[2] = y;
+				}
+			}
 		}
+
+
+		//---------------------
+		//Hough Line Transform
+		//---------------------
+		int **HL = hough_line_transform(dartboards, db, image, thresh_magnitude, 0.1, theta_numsteps, rhomax);
+		//Find out how many lines cross the centre
+		int linescore = hough_lines(HL, thresh_acc_lines, theta_numsteps, rhomax, colourimage, drawhough, bestcentre);
+		//---------------------
+
+
+		//----------------------
+		//Evaluate and Draw Bounding Boxes
+		//----------------------
+		//If the number of centres of multiple circles is over the threshold and is in a Viola Jones area
+		// and the the hough lines is over a threshold then combine the two and detect a dartboard
+		// Output a confindence
+		//This combines both hough transforms and viola jones
+		if (linescore > thresh_numlines){
+			if (drawhough) rectangle(colourimage, Point(dartboards[db].x, dartboards[db].y), Point(dartboards[db].x + dartboards[db].width, dartboards[db].y + dartboards[db].height), Scalar( 255, 0, 0 ), 3);
+		}
+		if (dbcentrescore > thresh_numcentres){
+			float confidence = 0.7;
+			confidence = confidence + ((float)dbcentrescore / 1000) + ((float)linescore / 1000) ;
+			if (confidence > 1) confidence = 1;
+			int px = bestcentre[1] - (dartboards[db].width / 2);
+			int py = bestcentre[2] - (dartboards[db].height / 2);
+				
+			Rect box = {px, py, dartboards[db].width, dartboards[db].height};
+			detections.push_back(box);
+			confidences.push_back(confidence);
+			if (drawunaveraged) rectangle(colourimage, Point(px, py), Point(px + dartboards[db].width, py + dartboards[db].height), Scalar( 0, 255, 255 ), 2);
+		}
+		//----------------------
 	}
+	//--------------------------------
+
 
 	//-------------------
 	//Draw ground truths
@@ -494,39 +601,90 @@ int main( int argc, const char** argv ){
 		rectangle(colourimage, Point(ground_truths[image_number][0][dj], ground_truths[image_number][1][dj]), Point(ground_truths[image_number][2][dj], ground_truths[image_number][3][dj]), Scalar( 0, 0, 255 ), 2);
 	}
 
-	/*
-	//Compare
-	float ious[dartboards.size()];
-	int correctdetect = 0;
-	for( int i = 0; i < dartboards.size(); i++ ){
-		//Correctly detected number of dartboards
-		float best_iou = 0;
-		for ( int j = 0; j < get_num_actual_dartboards(image_number); j++ ){
-			int a[4] = {dartboards[i].x, dartboards[i].y, dartboards[i].x + dartboards[i].width, dartboards[i].y + dartboards[i].height};
-			int b[4] = {ground_truths[image_number][0][j],ground_truths[image_number][1][j],ground_truths[image_number][2][j],ground_truths[image_number][3][j]};
+	
+	//-------------------
+	//Final Evaluation
+	//-------------------
+	//If there are many detections of the same dartboard fix that here by making an average distance
+	// based on weighted confidence
+	
+	//Get iou between dartboards
+	float dartboardsious[detections.size()][detections.size()];
+	for (int db = 0; db < detections.size(); db++){
+		for (int db2 = 0; db2 < detections.size(); db2++){
+			int a[4] = {detections[db].x, detections[db].y, detections[db].x + detections[db].width, detections[db].y + detections[db].height};
+			int b[4] = {detections[db2].x, detections[db2].y, detections[db2].x + detections[db2].width, detections[db2].y + detections[db2].height};
 			float iou = get_iou(a, b);
-			if (iou > best_iou) best_iou = iou;
-		}
-		ious[i] = best_iou;
-		
- 		if (correctdetect < get_num_actual_dartboards(image_number)){
-			if (best_iou > vjthreshold){
-				correctdetect++;
-				std::cout << "Dartboard detected with iou:" << std::endl;
-				std::cout << best_iou << std::endl;
-			}
+			if (db == db2){
+				dartboardsious[db][db2] = 0;
+			} else {
+				dartboardsious[db][db2] = iou;
+			}	
 		}
 	}
-	//std::cout << correctdetect << std::endl; // here incorrect
-	*/
+	
+	//Find overlapping dartboards
+	std::vector<int> overlaps;
+	for (int db = 0; db < detections.size(); db++){
+		for (int db2 = 0; db2 < detections.size(); db2++){
+			if (dartboardsious[db][db2] > thresh_overlap) overlaps.push_back(db2);
+		} 
+	}
+
+	sort(overlaps.begin(),overlaps.end());
+	overlaps.erase( unique(overlaps.begin(),overlaps.end() ),overlaps.end());
+
+	//Average output
+	if (!overlaps.empty()){
+		float avgx = 0;
+		float avgy = 0;
+		float avgwidth = 0;
+		float avgheight = 0;
+		for (int i = 0; i < overlaps.size(); i ++){
+			avgx += detections[overlaps[i]].x;
+			avgy += detections[overlaps[i]].y;
+			avgwidth += detections[overlaps[i]].width;
+			avgheight += detections[overlaps[i]].height;
+		}
+		avgx = avgx / overlaps.size();
+		avgy = avgy / overlaps.size();
+		avgwidth = avgwidth / overlaps.size();
+		avgheight = avgheight / overlaps.size();
+		rectangle(colourimage, Point(avgx, avgy), Point(avgx + avgwidth, avgy + avgheight), Scalar( 0, 255, 0 ), 3);
+		std::cout << "Dartboard Detected with confidence:" << std::endl;
+		std::cout << confidences[overlaps.front()] << std::endl;
+		numdbpass++;
+	}
+	//-------------------
+
 
 	//-------------------------------------
 	//Output number of detected dartboards
 	//-------------------------------------
-	std::cout << " " << std::endl;
+	for (int i = 0; i < detections.size(); i++){
+		if (!(std::find(overlaps.begin(), overlaps.end(), i) != overlaps.end())){
+			rectangle(colourimage, Point(detections[i].x, detections[i].y), Point(detections[i].x + detections[i].width, detections[i].y + detections[i].height), Scalar( 0, 255, 0 ), 3);
+			std::cout << "Dartboard Detected with confidence:" << std::endl;
+			std::cout << confidences[i] << std::endl;
+			numdbpass++;
+		} 
+	}
+
 	std::cout << "Number of dartboards passing all detectors:" << std::endl;
 	std::cout << numdbpass << std::endl;
+	std::cout << "Out of:" << std::endl;
+	std::cout << get_num_actual_dartboards(image_number) << std::endl;
+	//-------------------------------------
 
+	/*
+	//Print f1 score
+	float precision = ((float) get_num_detected_dartboards(image_number)/ (float) dartboards.size());
+	float recall = ((float) get_num_detected_dartboards(image_number) / (float) get_num_actual_dartboards(image_number));
+	float f1_score = calculate_f1_score(precision, recall);
+	std::cout << "F1 score:" << std::endl;
+	std::cout << f1_score << std::endl;
+	*/
+	
     imwrite("detected.jpg", colourimage );
     return 0;
 }
